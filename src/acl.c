@@ -1,7 +1,7 @@
 /*
  * acl.c - Manage the ACL (Access Control List)
  *
- * Copyright (C) 2013 - 2016, Max Lv <max.c.lv@gmail.com>
+ * Copyright (C) 2013 - 2017, Max Lv <max.c.lv@gmail.com>
  *
  * This file is part of the shadowsocks-libev.
  *
@@ -20,8 +20,17 @@
  * <http://www.gnu.org/licenses/>.
  */
 
-#include <ipset/ipset.h>
+#ifdef HAVE_CONFIG_H
+#include "config.h"
+#endif
+
 #include <ctype.h>
+
+#ifdef USE_SYSTEM_SHARED_LIB
+#include <libcorkipset/ipset.h>
+#else
+#include <ipset/ipset.h>
+#endif
 
 #include "rule.h"
 #include "utils.h"
@@ -41,23 +50,53 @@ static int acl_mode = BLACK_LIST;
 
 static struct cache *block_list;
 
+static struct ip_set outbound_block_list_ipv4;
+static struct ip_set outbound_block_list_ipv6;
+static struct cork_dllist outbound_block_list_rules;
+
 void
 init_block_list()
 {
-    // Initialize cache
     cache_create(&block_list, 256, NULL);
+}
+
+void
+free_block_list()
+{
+    cache_clear(block_list, 0); // Remove all items
 }
 
 int
 remove_from_block_list(char *addr)
 {
     size_t addr_len = strlen(addr);
-
     return cache_remove(block_list, addr, addr_len);
 }
 
+void
+clear_block_list()
+{
+    cache_clear(block_list, 3600); // Clear items older than 1 hour
+}
+
 int
-check_block_list(char *addr, int err_level)
+check_block_list(char *addr)
+{
+    size_t addr_len = strlen(addr);
+
+    if (cache_key_exist(block_list, addr, addr_len)) {
+        int *count = NULL;
+        cache_lookup(block_list, addr, addr_len, &count);
+
+        if (count != NULL && *count > MAX_TRIES)
+            return 1;
+    }
+
+    return 0;
+}
+
+int
+update_block_list(char *addr, int err_level)
 {
     size_t addr_len = strlen(addr);
 
@@ -69,7 +108,7 @@ check_block_list(char *addr, int err_level)
                 return 1;
             (*count) += err_level;
         }
-    } else {
+    } else if (err_level > 0) {
         int *count = (int *)ss_malloc(sizeof(int));
         *count = 1;
         cache_insert(block_list, addr, addr_len, count);
@@ -106,7 +145,7 @@ trimwhitespace(char *str)
     char *end;
 
     // Trim leading space
-    while (isspace(*str))
+    while (isspace((unsigned char)*str))
         str++;
 
     if (*str == 0)   // All spaces?
@@ -114,7 +153,7 @@ trimwhitespace(char *str)
 
     // Trim trailing space
     end = str + strlen(str) - 1;
-    while (end > str && isspace(*end))
+    while (end > str && isspace((unsigned char)*end))
         end--;
 
     // Write new null terminator
@@ -133,9 +172,12 @@ init_acl(const char *path)
     ipset_init(&white_list_ipv6);
     ipset_init(&black_list_ipv4);
     ipset_init(&black_list_ipv6);
+    ipset_init(&outbound_block_list_ipv4);
+    ipset_init(&outbound_block_list_ipv6);
 
     cork_dllist_init(&black_list_rules);
     cork_dllist_init(&white_list_rules);
+    cork_dllist_init(&outbound_block_list_rules);
 
     struct ip_set *list_ipv4  = &black_list_ipv4;
     struct ip_set *list_ipv6  = &black_list_ipv6;
@@ -156,19 +198,23 @@ init_acl(const char *path)
                 buf[len - 1] = '\0';
             }
 
-            char *line = trimwhitespace(buf);
-
-            // Skip comments
-            if (line[0] == '#') {
-                continue;
+            char *comment = strchr(buf, '#');
+            if (comment) {
+                *comment = '\0';
             }
 
+            char *line = trimwhitespace(buf);
             if (strlen(line) == 0) {
                 continue;
             }
 
-            if (strcmp(line, "[black_list]") == 0
-                || strcmp(line, "[bypass_list]") == 0) {
+            if (strcmp(line, "[outbound_block_list]") == 0) {
+                list_ipv4 = &outbound_block_list_ipv4;
+                list_ipv6 = &outbound_block_list_ipv6;
+                rules     = &outbound_block_list_rules;
+                continue;
+            } else if (strcmp(line, "[black_list]") == 0
+                       || strcmp(line, "[bypass_list]") == 0) {
                 list_ipv4 = &black_list_ipv4;
                 list_ipv6 = &black_list_ipv6;
                 rules     = &black_list_rules;
@@ -320,4 +366,33 @@ acl_remove_ip(const char *ip)
     }
 
     return 0;
+}
+
+/*
+ * Return 0,  if not match.
+ * Return 1,  if match black list.
+ */
+int
+outbound_block_match_host(const char *host)
+{
+    struct cork_ip addr;
+    int ret = 0;
+    int err = cork_ip_init(&addr, host);
+
+    if (err) {
+        int host_len = strlen(host);
+        if (lookup_rule(&outbound_block_list_rules, host, host_len) != NULL)
+            ret = 1;
+        return ret;
+    }
+
+    if (addr.version == 4) {
+        if (ipset_contains_ipv4(&outbound_block_list_ipv4, &(addr.ip.v4)))
+            ret = 1;
+    } else if (addr.version == 6) {
+        if (ipset_contains_ipv6(&outbound_block_list_ipv6, &(addr.ip.v6)))
+            ret = 1;
+    }
+
+    return ret;
 }

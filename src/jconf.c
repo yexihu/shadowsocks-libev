@@ -1,7 +1,7 @@
 /*
  * jconf.c - Parse the JSON format config file
  *
- * Copyright (C) 2013 - 2016, Max Lv <max.c.lv@gmail.com>
+ * Copyright (C) 2013 - 2017, Max Lv <max.c.lv@gmail.com>
  *
  * This file is part of the shadowsocks-libev.
  * shadowsocks-libev is free software; you can redistribute it and/or modify
@@ -32,6 +32,12 @@
 
 #include <libcork/core.h>
 
+#define check_json_value_type(value, expected_type, message) \
+    do { \
+        if ((value)->type != (expected_type)) \
+            FATAL((message)); \
+    } while(0)
+
 static char *
 to_string(const json_value *value)
 {
@@ -40,7 +46,7 @@ to_string(const json_value *value)
     } else if (value->type == json_integer) {
         return strdup(ss_itoa(value->u.integer));
     } else if (value->type == json_null) {
-        return "null";
+        return NULL;
     } else {
         LOGE("%d", value->type);
         FATAL("Invalid config format.");
@@ -56,14 +62,17 @@ free_addr(ss_addr_t *addr)
 }
 
 void
-parse_addr(const char *str, ss_addr_t *addr)
+parse_addr(const char *str_in, ss_addr_t *addr)
 {
+    if (str_in == NULL) return;
+
     int ipv6 = 0, ret = -1, n = 0;
     char *pch;
+    char *str = strdup(str_in);
 
     struct cork_ip ip;
     if (cork_ip_init(&ip, str) != -1) {
-        addr->host = strdup(str);
+        addr->host = str;
         addr->port = NULL;
         return;
     }
@@ -96,6 +105,43 @@ parse_addr(const char *str, ss_addr_t *addr)
         }
         addr->port = strdup(str + ret + 1);
     }
+
+    free(str);
+}
+
+static int
+parse_dscp(char *str)
+{
+    size_t str_len = strlen(str);
+
+    // Pre-defined values (EF, CSx, AFxy)
+    if (str_len == 2 && strcasecmp(str, "EF") == 0) {
+        return DSCP_EF;
+    }
+
+    if (str_len == DSCP_CS_LEN && strncasecmp(str, "CS", 2) == 0) {
+        if (str[2] >= '0' && str[2] <= '7') {
+            // CSx = 8x
+            return (str[2] - '0') << 3;
+        }
+    }
+
+    if (str_len == DSCP_AF_LEN && strncasecmp(str, "AF", 2) == 0) {
+        if (str[2] >= '1' && str[2] <= '4' && str[3] >= '1' && str[3] <= '3') {
+            // AFxy = 8x + 2y
+            return ((str[2] - '0') << 3) | ((str[3] - '0') << 1);
+        }
+    }
+
+    // Manual hexadecimal mode (0xYZ)
+    char *endptr;
+    int dscp = (int)strtol(str, &endptr, 0);
+    if (*endptr == '\0' && dscp >= DSCP_MIN && dscp <= DSCP_MAX) {
+        return dscp;
+    }
+
+    LOGE("Invalid DSCP value (%s)", str);
+    return DSCP_DEFAULT;
 }
 
 jconf_t *
@@ -154,7 +200,9 @@ read_jconf(const char *file)
                             break;
                         }
                         json_value *v = value->u.array.values[j];
-                        parse_addr(to_string(v), conf.remote_addr + j);
+                        char *addr_str = to_string(v);
+                        parse_addr(addr_str, conf.remote_addr + j);
+                        ss_free(addr_str);
                         conf.remote_num = j + 1;
                     }
                 } else if (value->type == json_string) {
@@ -185,18 +233,55 @@ read_jconf(const char *file)
                 conf.local_port = to_string(value);
             } else if (strcmp(name, "password") == 0) {
                 conf.password = to_string(value);
+            } else if (strcmp(name, "key") == 0) {
+                conf.key = to_string(value);
             } else if (strcmp(name, "method") == 0) {
                 conf.method = to_string(value);
             } else if (strcmp(name, "timeout") == 0) {
                 conf.timeout = to_string(value);
+            } else if (strcmp(name, "user") == 0) {
+                conf.user = to_string(value);
+            } else if (strcmp(name, "plugin") == 0) {
+                conf.plugin = to_string(value);
+                if (strlen(conf.plugin) == 0) {
+                    ss_free(conf.plugin);
+                    conf.plugin = NULL;
+                }
+            } else if (strcmp(name, "plugin_opts") == 0) {
+                conf.plugin_opts = to_string(value);
             } else if (strcmp(name, "fast_open") == 0) {
+                check_json_value_type(value, json_boolean,
+                        "invalid config file: option 'fast_open' must be a boolean");
                 conf.fast_open = value->u.boolean;
+            } else if (strcmp(name, "reuse_port") == 0) {
+                check_json_value_type(value, json_boolean,
+                        "invalid config file: option 'reuse_port' must be a boolean");
+                conf.reuse_port = value->u.boolean;
             } else if (strcmp(name, "auth") == 0) {
-                conf.auth = value->u.boolean;
+                FATAL("One time auth has been deprecated. Try AEAD ciphers instead.");
             } else if (strcmp(name, "nofile") == 0) {
+                check_json_value_type(value, json_integer,
+                    "invalid config file: option 'nofile' must be an integer");
                 conf.nofile = value->u.integer;
             } else if (strcmp(name, "nameserver") == 0) {
                 conf.nameserver = to_string(value);
+            } else if (strcmp(name, "dscp") == 0) {
+                if (value->type == json_object) {
+                    for (j = 0; j < value->u.object.length; j++) {
+                        if (j >= MAX_DSCP_NUM) {
+                            break;
+                        }
+                        json_value *v = value->u.object.values[j].value;
+                        if (v->type == json_string) {
+                            int dscp = parse_dscp(to_string(v));
+                            char *port = ss_strndup(value->u.object.values[j].name,
+                                    value->u.object.values[j].name_length);
+                            conf.dscp[j].port = port;
+                            conf.dscp[j].dscp = dscp;
+                            conf.dscp_num = j + 1;
+                        }
+                    }
+                }
             } else if (strcmp(name, "tunnel_address") == 0) {
                 conf.tunnel_address = to_string(value);
             } else if (strcmp(name, "mode") == 0) {
@@ -213,9 +298,17 @@ read_jconf(const char *file)
                          mode_str);
                 ss_free(mode_str);
             } else if (strcmp(name, "mtu") == 0) {
+                check_json_value_type(value, json_integer,
+                    "invalid config file: option 'mtu' must be an integer");
                 conf.mtu = value->u.integer;
             } else if (strcmp(name, "mptcp") == 0) {
+                check_json_value_type(value, json_boolean,
+                    "invalid config file: option 'mptcp' must be a boolean");
                 conf.mptcp = value->u.boolean;
+            } else if (strcmp(name, "ipv6_first") == 0) {
+                check_json_value_type(value, json_boolean,
+                    "invalid config file: option 'ipv6_first' must be a boolean");
+                conf.ipv6_first = value->u.boolean;
             }
         }
     } else {

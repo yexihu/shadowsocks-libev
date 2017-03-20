@@ -1,3 +1,75 @@
+shadowsocks-libev (3.0.4-1) unstable; urgency=medium
+
+  * Add CMake files by @wenerme.
+  * Support TCP Fast Open in ss-redir by @lqs.
+  * Support TOS/DESCP in ss-redir by @sduponch.
+  * Refine MPTCP by @sduponch.
+
+ -- Max Lv <max.c.lv@gmail.com>  Thu, 16 Mar 2017 14:07:57 +0800
+
+shadowsocks-libev (3.0.3-1) unstable; urgency=medium
+
+  * Replace nonce cache with a ping-pong bloom filter.
+
+ -- Max Lv <max.c.lv@gmail.com>  Fri, 24 Feb 2017 12:08:31 +0800
+
+shadowsocks-libev (3.0.2-1) unstable; urgency=high
+
+  * Add session key for AEAD. (SIP007)
+
+ -- Max Lv <max.c.lv@gmail.com>  Mon, 13 Feb 2017 09:07:17 +0800
+
+shadowsocks-libev (3.0.1-1) unstable; urgency=medium
+
+  * Fix a crashe when using stream ciphers.
+  * Fix a protocol bug in AEAD ciphers. (SIP004)
+  * Allow setting keys directly. (SIP006)
+
+ -- Max Lv <max.c.lv@gmail.com>  Tue, 07 Feb 2017 13:18:02 +0800
+
+shadowsocks-libev (3.0.0-1) unstable; urgency=medium
+
+  * Drop dependencies of OpenSSL and PolarSSL.
+  * Deprecate OTA (One-Time-Auth).
+  * Add new ciphers for SIP004: aes-128-gcm, aes-192-gcm, aes-256-gcm,
+    chacha20-poly1305 and chacha20-ietf-poly1305.
+  * Refine SIP003 to support standalone mode of obfsproxy.
+
+ -- Max Lv <max.c.lv@gmail.com>  Wed, 01 Feb 2017 19:10:14 +0800
+
+shadowsocks-libev (2.6.3-1) unstable; urgency=medium
+
+  * Refine the project structure.
+
+ -- Max Lv <max.c.lv@gmail.com>  Tue, 24 Jan 2017 19:10:45 +0800
+
+shadowsocks-libev (2.6.2-1) unstable; urgency=medium
+
+  * Refine SIP003 plugin support.
+
+ -- Max Lv <max.c.lv@gmail.com>  Mon, 16 Jan 2017 10:16:12 +0800
+
+shadowsocks-libev (2.6.1-1) unstable; urgency=medium
+
+  * Deprecate HTTP/TLS obfuscating.
+  * Add SIP003 plugin support.
+
+ -- Max Lv <max.c.lv@gmail.com>  Sun, 08 Jan 2017 15:14:19 +0800
+
+shadowsocks-libev (2.6.0-1) unstable; urgency=medium
+
+  * Add HTTP/TLS obfuscating.
+  * Add support of aunch_activate_socket on macOS.
+
+ -- Max Lv <max.c.lv@gmail.com>  Tue, 27 Dec 2016 16:37:23 +0800
+
+shadowsocks-libev (2.5.6-1) unstable; urgency=medium
+
+  * Add outbound ACL for server.
+  * Refine log format.
+
+ -- Max Lv <max.c.lv@gmail.com>  Tue, 01 Nov 2016 09:51:52 +0800
+
 shadowsocks-libev (2.5.5-1) unstable; urgency=medium
 
   * Refine attack detection.

@@ -32,16 +32,18 @@
 #include <stdlib.h>
 #include <string.h>
 #include <fcntl.h>
-#include <ev.h>
-#include <udns.h>
 
-#ifdef __MINGW32__
-#include "win32.h"
-#else
 #include <sys/socket.h>
 #include <netinet/in.h>
 #include <errno.h>
 #include <unistd.h>
+
+#include <udns.h>
+
+#ifdef HAVE_LIBEV_EV_H
+#include <libev/ev.h>
+#else
+#include <ev.h>
 #endif
 
 #include "resolv.h"
@@ -120,12 +122,8 @@ resolv_init(struct ev_loop *loop, char **nameservers, int nameserver_num, int ip
         }
     }
 
-#ifdef __MINGW32__
-    setnonblocking(sockfd);
-#else
     int flags = fcntl(sockfd, F_GETFL, 0);
     fcntl(sockfd, F_SETFL, flags | O_NONBLOCK);
-#endif
 
     ev_io_init(&resolv_io_watcher, resolv_sock_cb, sockfd, EV_READ);
     resolv_io_watcher.data = ctx;
@@ -169,6 +167,8 @@ resolv_query(const char *hostname, void (*client_cb)(struct sockaddr *, void *),
         LOGE("Failed to allocate memory for DNS query callback data.");
         return NULL;
     }
+    memset(cb_data, 0, sizeof(struct ResolvQuery));
+
     cb_data->client_cb      = client_cb;
     cb_data->client_free_cb = client_free_cb;
     cb_data->client_cb_data = client_cb_data;
@@ -264,8 +264,8 @@ dns_query_v4_cb(struct dns_ctx *ctx, struct dns_rr_a4 *result, void *data)
             cb_data->responses = new_responses;
 
             for (int i = 0; i < result->dnsa4_nrr; i++) {
-                struct sockaddr_in *sa =
-                    (struct sockaddr_in *)malloc(sizeof(struct sockaddr_in));
+                struct sockaddr_in *sa = ss_malloc(sizeof(struct sockaddr_in));
+                memset(sa, 0, sizeof(struct sockaddr_in));
                 sa->sin_family = AF_INET;
                 sa->sin_port   = cb_data->port;
                 sa->sin_addr   = result->dnsa4_addr[i];
@@ -311,8 +311,8 @@ dns_query_v6_cb(struct dns_ctx *ctx, struct dns_rr_a6 *result, void *data)
             cb_data->responses = new_responses;
 
             for (int i = 0; i < result->dnsa6_nrr; i++) {
-                struct sockaddr_in6 *sa =
-                    (struct sockaddr_in6 *)malloc(sizeof(struct sockaddr_in6));
+                struct sockaddr_in6 *sa = ss_malloc(sizeof(struct sockaddr_in6));
+                memset(sa, 0, sizeof(struct sockaddr_in6));
                 sa->sin6_family = AF_INET6;
                 sa->sin6_port   = cb_data->port;
                 sa->sin6_addr   = result->dnsa6_addr[i];
